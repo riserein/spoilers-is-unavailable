@@ -22,8 +22,25 @@ function validateContent(text,uid) {
 }
 export function publishCard(sourceCard, { visibilityByUid=null, expectedWorld='' }={}) {
   if (!sourceCard || typeof sourceCard !== 'object') throw new Error('角色卡数据无效');
-  const card=JSON.parse(JSON.stringify(sourceCard));
-  const book=getEntries(card);
+  // Do not stringify / parse / recursively clone a full 10MB+ HTML/MVU card.
+  // Copy only the containers that we actually mutate; all other frontend,
+  // script, MVU and metadata payloads remain untouched and reference-shared.
+  const originalBook=getEntries(sourceCard);
+  const card={
+    ...sourceCard,
+    data:{
+      ...sourceCard.data,
+      extensions:{...(sourceCard.data?.extensions || {})},
+      character_book:{
+        ...originalBook,
+        entries:originalBook.entries.map(entry=>({
+          ...entry,
+          extensions:{...(entry.extensions || {})}
+        }))
+      }
+    }
+  };
+  const book=card.data.character_book;
   const linkedWorld=String(card.data?.extensions?.world || '');
   if (expectedWorld && linkedWorld && linkedWorld!==expectedWorld) throw new Error(`角色绑定的主世界书是「${linkedWorld}」，当前却选了「${expectedWorld}」`);
   if (expectedWorld && book.name && book.name!==expectedWorld && linkedWorld!==expectedWorld) throw new Error(`内嵌世界书「${book.name}」与「${expectedWorld}」不匹配`);
