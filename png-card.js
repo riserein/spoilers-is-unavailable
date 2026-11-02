@@ -24,7 +24,14 @@ function fromBase64(s){
   for(let i=0;i<value.length;i++)out[i]=value.charCodeAt(i);
   return out;
 }
-function typeOf(bytes){return String.fromCharCode(...bytes);}
+function typeOf(bytes){
+  // PNG character cards may embed hundreds of KB of base64 metadata.
+  // Spreading the whole Uint8Array into one call overflows JavaScript's call stack.
+  let text='';
+  const size=0x4000;
+  for(let i=0;i<bytes.length;i+=size)text+=String.fromCharCode(...bytes.subarray(i,i+size));
+  return text;
+}
 function chunksOf(bytes){
   for(let i=0;i<8;i++)if(bytes[i]!==SIGNATURE[i])throw new Error('不是 PNG 图片');
   const out=[];let pos=8,ended=false;
@@ -49,11 +56,14 @@ function makeChunk(type,data){
   buf.set(data,8);put32(buf,buf.length-4,crc32(buf.subarray(4,-4)));
   return buf;
 }
+function latin1Bytes(value){
+  // Avoid huge temporary arrays when serializing large base64 metadata.
+  const out=new Uint8Array(value.length);
+  for(let i=0;i<value.length;i++)out[i]=value.charCodeAt(i);
+  return out;
+}
 function makeText(keyword,value){
-  return makeChunk('tEXt',concat([
-    Uint8Array.from([...keyword].map(c=>c.charCodeAt(0))),Uint8Array.of(0),
-    Uint8Array.from([...value].map(c=>c.charCodeAt(0)))
-  ]));
+  return makeChunk('tEXt',concat([latin1Bytes(keyword),Uint8Array.of(0),latin1Bytes(value)]));
 }
 function findCardChunk(chunks){
   const texts=chunks.filter(x=>x.type==='tEXt').map(x=>decodeText(x.data)).filter(Boolean);
