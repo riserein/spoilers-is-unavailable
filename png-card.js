@@ -13,10 +13,25 @@ function put32(input,pos,n){input[pos]=(n>>>24)&255;input[pos+1]=(n>>>16)&255;in
 function concat(parts){let total=0;for(const a of parts)total+=a.length;const buf=new Uint8Array(total);let p=0;for(const a of parts){buf.set(a,p);p+=a.length;}return buf;}
 function asBytes(v){return v instanceof Uint8Array?v:new Uint8Array(v);}
 function toBase64(bytes){
-  let s='';const size=0x4000;
-  for(let i=0;i<bytes.length;i+=size)s+=String.fromCharCode(...bytes.subarray(i,i+size));
-  if(typeof btoa==='undefined')throw new Error('环境不支持 Base64');
-  return btoa(s);
+  // Encode via typed arrays; never spread large byte arrays into a JS call.
+  const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const result=new Uint8Array(Math.ceil(bytes.length/3)*4);
+  let i=0,j=0;
+  for(;i+2<bytes.length;i+=3){
+    const n=(bytes[i]<<16)|(bytes[i+1]<<8)|bytes[i+2];
+    result[j++]=alphabet.charCodeAt((n>>>18)&63);
+    result[j++]=alphabet.charCodeAt((n>>>12)&63);
+    result[j++]=alphabet.charCodeAt((n>>>6)&63);
+    result[j++]=alphabet.charCodeAt(n&63);
+  }
+  if(i<bytes.length){
+    const n=bytes[i]<<16|((i+1<bytes.length?bytes[i+1]:0)<<8);
+    result[j++]=alphabet.charCodeAt((n>>>18)&63);
+    result[j++]=alphabet.charCodeAt((n>>>12)&63);
+    result[j++]=i+1<bytes.length?alphabet.charCodeAt((n>>>6)&63):61;
+    result[j++]=61;
+  }
+  return new TextDecoder('ascii').decode(result);
 }
 function fromBase64(s){
   if(typeof atob==='undefined')throw new Error('环境不支持 Base64');
@@ -25,12 +40,9 @@ function fromBase64(s){
   return out;
 }
 function typeOf(bytes){
-  // PNG character cards may embed hundreds of KB of base64 metadata.
-  // Spreading the whole Uint8Array into one call overflows JavaScript's call stack.
-  let text='';
-  const size=0x4000;
-  for(let i=0;i<bytes.length;i+=size)text+=String.fromCharCode(...bytes.subarray(i,i+size));
-  return text;
+  // PNG tEXt keywords and character-card base64 are ASCII; native decode
+  // avoids call stack overflow in browsers with lower argument limits.
+  return new TextDecoder('windows-1252').decode(bytes);
 }
 function chunksOf(bytes){
   for(let i=0;i<8;i++)if(bytes[i]!==SIGNATURE[i])throw new Error('不是 PNG 图片');
