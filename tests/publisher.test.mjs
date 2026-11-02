@@ -91,3 +91,23 @@ test('multi-megabyte lorebook metadata roundtrip without stack overflow', () => 
   assert.ok(result.data.character_book.entries[1].content.startsWith('LSPHIDDEN_'));
   assert.equal(result.data.extensions.regex_scripts.at(-1).replaceString,secret);
 });
+
+test('10MB front-end MVU author-card preservation',()=>{
+  const source=card();
+  source.data.first_mes='<main class="mvu">'+ 'H'.repeat(3600000) +'</main><script>window.interactive=true</script>';
+  source.data.extensions.mvu={inventory:'M'.repeat(3600000),character:{state:{hp:100,trust:12}}};
+  source.data.character_book.entries[0].content='public '+ 'P'.repeat(2000000);
+  source.data.character_book.entries[1].content='secret '+ 'S'.repeat(2000000);
+  assert.ok(Buffer.byteLength(JSON.stringify(source))>10000000);
+  const image=fixture(source);
+  const output=publishCard(source).card;
+  assert.equal(source.data.character_book.entries[1].content.startsWith('secret'),true);
+  assert.equal(output.data.first_mes,source.data.first_mes);
+  assert.deepEqual(output.data.extensions.mvu,source.data.extensions.mvu);
+  const png=writePngCard(image,output);
+  const loaded=readPngCard(png);
+  assert.equal(loaded.data.first_mes,source.data.first_mes);
+  assert.deepEqual(loaded.data.extensions.mvu,source.data.extensions.mvu);
+  assert.equal(loaded.data.character_book.entries[0].content,source.data.character_book.entries[0].content);
+  assert.equal(loaded.data.extensions.regex_scripts.at(-1).replaceString,source.data.character_book.entries[1].content);
+});
