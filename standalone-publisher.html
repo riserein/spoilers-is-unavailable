@@ -20,7 +20,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#211a1e;border:1px so
 footer{font-size:12px;color:#a99d9a;margin-top:25px}
 @media(max-width:600px){.panel{padding:14px}.row{flex-direction:column;align-items:stretch}}
 </style></head><body>
-<div class="eyebrow">Lore Spoilers / Offline Publisher</div>
+<div class="eyebrow">Lore Spoilers / Offline Publisher · v2.1.1</div>
 <h1>作者端 · 防剧透角色卡发布器</h1>
 <p class="muted">本页面可直接在电脑本地打开，不需要安装酒馆扩展、上传文件或连接服务器。针对含 HTML 前端、MVU、脚本和大型世界书的角色卡设计。</p>
 <div class="panel">
@@ -31,6 +31,7 @@ footer{font-size:12px;color:#a99d9a;margin-top:25px}
 <div class="panel" id="editor" hidden>
   <h2>② 逐条设置公开或隐藏</h2>
   <p id="count" class="muted sub"></p>
+  <p class="muted sub">正文为空的条目不包含可隐藏的文字，发布器会自动保留它们，不影响其他条目。</p>
   <input type="search" id="search" placeholder="搜索条目标题 / ID / 关键词">
   <div class="actions" style="margin:10px 0">
     <button id="allPublic">全部公开</button><button id="allHidden">全部隐藏</button>
@@ -68,22 +69,28 @@ function freshToken() {
   throw new Error('当前环境不支持安全随机数，无法生成占位符。');
 }
 function validateContent(text,uid) {
-  if (typeof text !== 'string' || !text.length) return `条目 #${uid} 的正文为空，无法发布`;
+  if (typeof text !== 'string') return `条目 #${uid} 的正文格式不正确，需要文本字符串`;
   if (/\$\d+|\$<[^>]+>/.test(text)) return `条目 #${uid} 含 $1 / $<name> 形式的文本，正则会误认为捕获组；请先改写。`;
   return null;
 }
 function publishCard(sourceCard, { visibilityByUid=null, expectedWorld='' }={}) {
   if (!sourceCard || typeof sourceCard !== 'object') throw new Error('角色卡数据无效');
-  // Preserve large HTML/MVU payloads by copying only modified containers.
+  // Do not stringify / parse / recursively clone a full 10MB+ HTML/MVU card.
+  // Copy only the containers that we actually mutate; all other frontend,
+  // script, MVU and metadata payloads remain untouched and reference-shared.
   const originalBook=getEntries(sourceCard);
   const card={
     ...sourceCard,
     data:{
       ...sourceCard.data,
       extensions:{...(sourceCard.data?.extensions || {})},
-      character_book:{...originalBook,entries:originalBook.entries.map(entry=>({
-        ...entry,extensions:{...(entry.extensions || {})}
-      }))}
+      character_book:{
+        ...originalBook,
+        entries:originalBook.entries.map(entry=>({
+          ...entry,
+          extensions:{...(entry.extensions || {})}
+        }))
+      }
     }
   };
   const book=card.data.character_book;
@@ -92,16 +99,28 @@ function publishCard(sourceCard, { visibilityByUid=null, expectedWorld='' }={}) 
   if (expectedWorld && book.name && book.name!==expectedWorld && linkedWorld!==expectedWorld) throw new Error(`内嵌世界书「${book.name}」与「${expectedWorld}」不匹配`);
   const scripts=Array.isArray(card.data?.extensions?.regex_scripts)
     ? card.data.extensions.regex_scripts.filter(s=>!String(s?.scriptName||'').startsWith(SCRIPT_PREFIX)) : [];
-  const hiddenIds=[],markers=[],issues=[];let visible=0;
+  const hiddenIds=[],markers=[],issues=[],skippedEmptyIds=[];let visible=0;
   const token=freshToken();
   book.entries.forEach((entry,index)=>{
     const uid=getId(entry,index);
     const override=visibilityByUid && Object.hasOwn(visibilityByUid,uid)?visibilityByUid[uid]:null;
     const hidden=(override??entry.extensions?.[VISIBILITY_FIELD])==='hidden';
     entry.extensions ||= {};
-    entry.extensions[VISIBILITY_FIELD]=hidden?'hidden':'public';
-    if(!hidden){visible++;return}
+    if(!hidden){
+      entry.extensions[VISIBILITY_FIELD]='public';
+      visible++;
+      return;
+    }
     const secret=entry.content;
+    // Empty entries may be triggers, placeholders or part of a UI/MVU card.
+    // They contain no readable secret to protect: leave them unchanged.
+    if(typeof secret==='string' && !secret.trim()){
+      entry.extensions[VISIBILITY_FIELD]='public';
+      skippedEmptyIds.push(uid);
+      visible++;
+      return;
+    }
+    entry.extensions[VISIBILITY_FIELD]='hidden';
     const issue=validateContent(secret,uid);
     if(issue){issues.push(issue);return}
     const marker=`LSPHIDDEN_${token}_${index}`;
@@ -116,17 +135,20 @@ function publishCard(sourceCard, { visibilityByUid=null, expectedWorld='' }={}) 
     hiddenIds.push(uid);markers.push(marker);
   });
   if(issues.length) throw new Error(issues.join('\n'));
-  if(!hiddenIds.length) throw new Error('没有标记为隐藏的条目，未生成发布版');
+  if(!hiddenIds.length) throw new Error(skippedEmptyIds.length
+    ? '所选隐藏条目的正文全部为空（' + skippedEmptyIds.length + ' 条），没有需要隐藏的文字。请至少选一条有正文的条目。'
+    : '没有标记为隐藏的条目，未生成发布版');
   card.data.extensions ||= {};
   card.data.extensions.regex_scripts=scripts;
   if(card.character_book && card.character_book!==card.data.character_book) delete card.character_book;
   card.data.extensions.lore_spoilers_publish={
-    version:'2.0.0',count:hiddenIds.length,
+    version:'2.1.1',count:hiddenIds.length,skippedEmptyCount:skippedEmptyIds.length,
     note:'Text is present in scoped regex replacement strings: NOT encrypted.'
   };
   const report={
     world:book.name||linkedWorld||'',total:book.entries.length,publicCount:visible,
-    hiddenCount:hiddenIds.length,hiddenIds,markers,scriptCount:scripts.length
+    hiddenCount:hiddenIds.length,hiddenIds,markers,scriptCount:scripts.length,
+    skippedEmptyCount:skippedEmptyIds.length,skippedEmptyIds
   };
   for(let j=0;j<hiddenIds.length;j++) {
     const script=scripts[scripts.length-hiddenIds.length+j];
@@ -288,7 +310,8 @@ function writePngCard(input,card){
   const uid=(entry,index)=>String(entry.id??entry.uid??index);
   function updateCount(){
     const n=[...overrides.values()].filter(x=>x==="hidden").length;
-    $("count").textContent="共 "+originalEntries.length+" 条；已隐藏 "+n+" 条；公开 "+(originalEntries.length-n)+" 条。";
+    const empty=originalEntries.filter(entry=>typeof entry.content==="string" && !entry.content.trim()).length;
+    $("count").textContent="共 "+originalEntries.length+" 条；准备隐藏 "+n+" 条；空白条目自动保留 "+empty+" 条。";
     $("publishPNG").disabled=!sourcePng || !n;
     $("publishJSON").disabled=!sourceCard || !n;
   }
@@ -302,13 +325,15 @@ function writePngCard(input,card){
       const id=uid(entry,index);
       const row=document.createElement("div");row.className="row";
       const name=document.createElement("label");
-      name.textContent=String(entry.comment|| (Array.isArray(entry.keys)?entry.keys.join(", "):"") || "(未命名条目)");
+      const blank=typeof entry.content==="string" && !entry.content.trim();
+      name.textContent=String(entry.comment|| (Array.isArray(entry.keys)?entry.keys.join(", "):"") || "(未命名条目)") + (blank?"（正文为空，自动保留）":"");
       const small=document.createElement("small");small.textContent="条目 ID: "+id;
       name.append(small);
       const select=document.createElement("select");
       select.setAttribute("aria-label","选择条目 "+id+" 的可见性");
       select.add(new Option("公开","public"));select.add(new Option("🔒 隐藏 · AI 可读","hidden"));
-      select.value=overrides.get(id)||"public";
+      select.value=blank?"public":(overrides.get(id)||"public");
+      select.disabled=blank;
       select.addEventListener("change",()=>{overrides.set(id,select.value);updateCount();});
       row.append(name,select);frag.append(row);
     }
@@ -336,7 +361,10 @@ function writePngCard(input,card){
       if(!Array.isArray(book?.entries))
         throw new Error("角色卡未嵌入主世界书。请先在 SillyTavern 绑定世界书并正常保存 / 导出原卡。");
       originalEntries=book.entries;
-      originalEntries.forEach((entry,index)=>overrides.set(uid(entry,index),entry.extensions?.lore_spoilers_visibility==="hidden"?"hidden":"public"));
+      originalEntries.forEach((entry,index)=>{
+        const blank=typeof entry.content==="string" && !entry.content.trim();
+        overrides.set(uid(entry,index),!blank && entry.extensions?.lore_spoilers_visibility==="hidden"?"hidden":"public");
+      });
       $("fileInfo").textContent="已读取："+file.name+"（"+(file.size/1024/1024).toFixed(2)+" MB）｜角色："+String(sourceCard.data.name||"未命名")+"｜世界书："+String(book.name||"无名称");
       $("editor").hidden=false;render();
       status("导入成功。现在可以逐条设置隐藏，再发布副本。");
@@ -347,7 +375,13 @@ function writePngCard(input,card){
   });
   $("search").addEventListener("input",render);
   for(const [button,value] of [["allPublic","public"],["allHidden","hidden"]]){
-    $(button).addEventListener("click",()=>{for(const id of overrides.keys())overrides.set(id,value);render();});
+    $(button).addEventListener("click",()=>{
+      originalEntries.forEach((entry,index)=>{
+        const blank=typeof entry.content==="string" && !entry.content.trim();
+        overrides.set(uid(entry,index),blank?"public":value);
+      });
+      render();
+    });
   }
   function download(blob,name){
     const url=URL.createObjectURL(blob);
@@ -380,7 +414,9 @@ function writePngCard(input,card){
         step="导出 PNG";
         download(new Blob([bytes],{type:"image/png"}),filename+"png");
       }
-      status("发布完成：隐藏 "+report.hiddenCount+" 条，保留 "+report.publicCount+" 条公开条目。原始文件未修改。");
+      status("发布完成：隐藏 "+report.hiddenCount+" 条，保留 "+report.publicCount+" 条公开条目"
+        +(report.skippedEmptyCount?"；自动跳过 "+report.skippedEmptyCount+" 条空白正文":"")
+        +"。原始文件未修改。");
     }catch(e){fail(e,step)}
     finally{updateCount()}
   }
