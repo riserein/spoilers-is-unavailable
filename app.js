@@ -6,13 +6,13 @@
  * This extension DOES NOT encrypt or remove any content; it does not affect
  * prompt generation or defend against editing/exporting/inspecting the files.
  */
-import { extension_settings } from "../../../extensions.js";
+import { extension_settings, extensionNames } from "../../../extensions.js";
 import { publishCard, auditPublishedCard } from "./publisher.js?v=2.0.5";
 import { readPngCard, writePngCard } from "./png-card.js?v=2.0.5";
 import { saveSettingsDebounced, characters, this_chid, getRequestHeaders } from "../../../../script.js";
 import { loadWorldInfo, saveWorldInfo, world_names } from "../../../world-info.js";
 
-const EXT = "lore-spoilers-selective";
+const EXT = "spoilers-is-unavailable"; // distinct from earlier ZIP installation
 const SETTINGS_HTML_URL = new URL("./example.html", import.meta.url).href;
 const FIELD = "lore_spoilers_visibility";
 const HIDDEN = "hidden";
@@ -152,7 +152,7 @@ function buildToolbar(book, data) {
     const header = document.createElement("div");
     header.className = "lsp-toolbar-head";
     const title = document.createElement("h4");
-    title.textContent = "🔐 逐条权限 — " + book + " · v2.0.6";
+    title.textContent = "🔐 逐条权限 — " + book + " · v2.1.0";
     const count = document.createElement("span");
     count.className = "lsp-secret-count";
     count.textContent = `${hiddenCount} 隐藏 / ${entries.length} 条`;
@@ -440,7 +440,7 @@ function reportPublishError(error, operation = "发布角色卡") {
     const stack = String(error?.cause?.stack || error?.stack || "(无法获取调用栈)");
     const message = String(error?.message || error);
     const diagnostics = [
-        "Lore Spoilers v2.0.6 错误诊断",
+        "Lore Spoilers v2.1.0 错误诊断",
         "操作：" + operation,
         "阶段：" + (error?.lspStage || "未进入导出阶段 / 其他操作"),
         "信息：" + message,
@@ -568,6 +568,20 @@ jQuery(async () => {
             saveSettingsDebounced();
             scheduleSync();
         });
+        // An earlier ZIP used a different directory, but registered the same UI
+        // listeners. Two installs can run both versions at once and produce old
+        // errors even after the GitHub copy was updated.
+        const competing = extensionNames.filter(name =>
+            /(?:^|\/)(?:lore-spoilers-selective|spoilers-is-unavailable)$/.test(name)
+        );
+        if (competing.length > 1) {
+            reportPublishError(
+                new Error("同时检测到多个 Lore Spoilers 安装：" + competing.join("、") +
+                    "。请在【扩展管理】中只保留 GitHub 版本 spoilers-is-unavailable，移除旧 ZIP 版，然后刷新页面。"),
+                "检测到重复安装"
+            );
+            return;
+        }
         bindEvents();
         setModeClass();
         scheduleSync();
