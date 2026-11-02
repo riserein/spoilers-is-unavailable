@@ -75,3 +75,19 @@ test('large PNG character metadata is read and written without call stack overfl
   assert.match(parsed.data.character_book.entries[1].content,/^LSPHIDDEN_/);
   assert.equal(parsed.data.extensions.regex_scripts.at(-1).replaceString,large.data.character_book.entries[1].content);
 });
+
+
+test('multi-megabyte lorebook metadata roundtrip without stack overflow', () => {
+  const large=card();
+  // Several megabytes of UTF-8 data, representative of a long lorebook.
+  const secret='秘密身份与世界书正文。'.repeat(180000);
+  large.data.character_book.entries[1].content=secret;
+  const png=fixture(large);
+  assert.ok(png.byteLength>3000000);
+  assert.equal(readPngCard(png).data.character_book.entries[1].content,secret);
+  const published=publishCard(large).card;
+  const output=writePngCard(png,published);
+  const result=readPngCard(output);
+  assert.ok(result.data.character_book.entries[1].content.startsWith('LSPHIDDEN_'));
+  assert.equal(result.data.extensions.regex_scripts.at(-1).replaceString,secret);
+});
