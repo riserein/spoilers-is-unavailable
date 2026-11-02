@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lore Spoilers · 作者独立发布器</title>
+<style>
+:root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color-scheme:dark;color:#f2ede9;background:#191b20}
+*{box-sizing:border-box}body{margin:0 auto;max-width:1120px;padding:26px 18px 90px;line-height:1.65}
+h1{font:600 clamp(26px,4vw,38px) Georgia,"Times New Roman",serif;margin:0 0 6px}h2{font-size:18px;margin:0 0 12px}
+.muted{color:#bcb6b1}.sub{font-size:13px}.eyebrow{letter-spacing:3px;text-transform:uppercase;color:#e7a99f;font-size:12px}
+.panel{margin-top:20px;background:#24262d;border:1px solid #49444a;border-radius:14px;padding:20px}
+input[type=file],input[type=search]{width:100%;background:#17191e;color:#f4eeee;border:1px solid #615d62;border-radius:9px;padding:12px;min-height:44px}
+button{padding:10px 15px;border-radius:8px;border:1px solid #a39a95;cursor:pointer;background:#3c353c;color:#f8eded;font-size:14px;min-height:40px}
+button.primary{background:#9e625d;color:white;border-color:#b67f77}button:disabled{opacity:.45;cursor:not-allowed}
+.actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.alert{padding:12px 14px;border-left:3px solid #e1a49b;background:#372c31;border-radius:5px}
+.row{display:flex;gap:10px;align-items:center;border-bottom:1px solid #373942;padding:8px 3px}
+.row label{flex:1;min-width:0;overflow-wrap:anywhere}.row small{display:block;opacity:.65}
+.row select{background:#191c23;color:#eee;border:1px solid #665e64;border-radius:7px;padding:6px}
+.scroll{max-height:60vh;overflow:auto}.danger{color:#ffc7bd}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#211a1e;border:1px solid #a55b53;padding:12px;border-radius:8px;max-height:260px;overflow:auto}
+footer{font-size:12px;color:#a99d9a;margin-top:25px}
+@media(max-width:600px){.panel{padding:14px}.row{flex-direction:column;align-items:stretch}}
+</style></head><body>
+<div class="eyebrow">Lore Spoilers / Offline Publisher</div>
+<h1>作者端 · 防剧透角色卡发布器</h1>
+<p class="muted">本页面可直接在电脑本地打开，不需要安装酒馆扩展、上传文件或连接服务器。针对含 HTML 前端、MVU、脚本和大型世界书的角色卡设计。</p>
+<div class="panel">
+  <h2>① 导入原始角色卡</h2>
+  <input id="source" type="file" accept=".png,.json,image/png,application/json">
+  <div id="fileInfo" class="muted sub" style="margin-top:8px">支持 SillyTavern 原始 PNG / JSON 角色卡（主世界书需已内嵌）。</div>
+</div>
+<div class="panel" id="editor" hidden>
+  <h2>② 逐条设置公开或隐藏</h2>
+  <p id="count" class="muted sub"></p>
+  <input type="search" id="search" placeholder="搜索条目标题 / ID / 关键词">
+  <div class="actions" style="margin:10px 0">
+    <button id="allPublic">全部公开</button><button id="allHidden">全部隐藏</button>
+    <span class="muted sub">隐藏只影响发布副本，原卡不会修改。</span>
+  </div>
+  <div class="scroll" id="rows"></div>
+</div>
+<div class="panel">
+  <h2>③ 发布</h2>
+  <div class="actions">
+    <button class="primary" id="publishPNG" disabled>下载防剧透 PNG</button>
+    <button id="publishJSON" disabled>下载防剧透 JSON</button>
+  </div>
+  <p id="status" class="muted sub" role="status"></p>
+  <pre id="error" hidden role="alert"></pre>
+</div>
+<p class="alert sub">注意：这是<strong>防普通玩家意外剧透</strong>，不是加密。秘密正文会保存在角色专属正则的替换规则里；玩家无需安装作者插件，但需要在 SillyTavern 启用、授权角色正则，AI 才能在提示词中还原正文。懂技术的玩家仍可以提取秘密。</p>
+<footer>数据只在浏览器内处理，不上传到网站。原文件不会修改；下载生成新的副本。</footer>
+<script>
+/**
+ * Lore Spoilers author-only release core. Spoiler deterrent, NOT encryption.
+ * The original secret text is moved into character-scoped Regex scripts.
+ */
+const VISIBILITY_FIELD = 'lore_spoilers_visibility';
+const SCRIPT_PREFIX = 'LSP Publish ▸ ';
+
+function getEntries(card) {
+  const book = card?.data?.character_book;
+  if (!book || !Array.isArray(book.entries)) throw new Error('角色卡没有内嵌世界书。请先绑定主世界书并保存角色，再导出。');
+  return book;
+}
+function getId(entry, index) { return String(entry.id ?? entry.uid ?? index); }
+function freshToken() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID().replaceAll('-', '').slice(0,24);
+  throw new Error('当前环境不支持安全随机数，无法生成占位符。');
+}
+function validateContent(text,uid) {
+  if (typeof text !== 'string' || !text.length) return `条目 #${uid} 的正文为空，无法发布`;
+  if (/\$\d+|\$<[^>]+>/.test(text)) return `条目 #${uid} 含 $1 / $<name> 形式的文本，正则会误认为捕获组；请先改写。`;
+  return null;
+}
+function publishCard(sourceCard, { visibilityByUid=null, expectedWorld='' }={}) {
+  if (!sourceCard || typeof sourceCard !== 'object') throw new Error('角色卡数据无效');
+  const card=JSON.parse(JSON.stringify(sourceCard));
+  const book=getEntries(card);
+  const linkedWorld=String(card.data?.extensions?.world || '');
+  if (expectedWorld && linkedWorld && linkedWorld!==expectedWorld) throw new Error(`角色绑定的主世界书是「${linkedWorld}」，当前却选了「${expectedWorld}」`);
+  if (expectedWorld && book.name && book.name!==expectedWorld && linkedWorld!==expectedWorld) throw new Error(`内嵌世界书「${book.name}」与「${expectedWorld}」不匹配`);
+  const scripts=Array.isArray(card.data?.extensions?.regex_scripts)
+    ? card.data.extensions.regex_scripts.filter(s=>!String(s?.scriptName||'').startsWith(SCRIPT_PREFIX)) : [];
+  const hiddenIds=[],markers=[],issues=[];let visible=0;
+  const token=freshToken();
+  book.entries.forEach((entry,index)=>{
+    const uid=getId(entry,index);
+    const override=visibilityByUid && Object.hasOwn(visibilityByUid,uid)?visibilityByUid[uid]:null;
+    const hidden=(override??entry.extensions?.[VISIBILITY_FIELD])==='hidden';
+    entry.extensions ||= {};
+    entry.extensions[VISIBILITY_FIELD]=hidden?'hidden':'public';
+    if(!hidden){visible++;return}
+    const secret=entry.content;
+    const issue=validateContent(secret,uid);
+    if(issue){issues.push(issue);return}
+    const marker=`LSPHIDDEN_${token}_${index}`;
+    entry.content=marker;
+    entry.comment=`🔒 隐藏剧情条目 ${index+1}`;
+    scripts.push({
+      id:`lsp-${token}-${index}`,scriptName:`${SCRIPT_PREFIX}${uid}`,
+      findRegex:`^${marker}$`,replaceString:secret,trimStrings:[],placement:[5],
+      disabled:false,markdownOnly:false,promptOnly:true,runOnEdit:false,
+      substituteRegex:0,minDepth:null,maxDepth:null
+    });
+    hiddenIds.push(uid);markers.push(marker);
+  });
+  if(issues.length) throw new Error(issues.join('\n'));
+  if(!hiddenIds.length) throw new Error('没有标记为隐藏的条目，未生成发布版');
+  card.data.extensions ||= {};
+  card.data.extensions.regex_scripts=scripts;
+  if(card.character_book && card.character_book!==card.data.character_book) delete card.character_book;
+  card.data.extensions.lore_spoilers_publish={
+    version:'2.0.0',count:hiddenIds.length,
+    note:'Text is present in scoped regex replacement strings: NOT encrypted.'
+  };
+  const report={
+    world:book.name||linkedWorld||'',total:book.entries.length,publicCount:visible,
+    hiddenCount:hiddenIds.length,hiddenIds,markers,scriptCount:scripts.length
+  };
+  for(let j=0;j<hiddenIds.length;j++) {
+    const script=scripts[scripts.length-hiddenIds.length+j];
+    const entry=book.entries.find(e=>e.content===markers[j]);
+    if(!entry||entry.content.replace(new RegExp(script.findRegex),()=>script.replaceString)!==script.replaceString) {
+      throw new Error('占位符还原测试失败');
+    }
+  }
+  return {card,report};
+}
+function auditPublishedCard(card) {
+  const book=getEntries(card),scripts=card.data?.extensions?.regex_scripts||[];
+  const issues=[];let count=0;
+  book.entries.forEach(entry=>{
+    if(entry.extensions?.[VISIBILITY_FIELD]!=='hidden')return;
+    count++;
+    const matched=scripts.filter(s=>String(s?.scriptName||'').startsWith(SCRIPT_PREFIX)
+      &&s.findRegex===`^${entry.content}$` && s.promptOnly===true && s.placement?.includes(5));
+    if(matched.length!==1) issues.push(`占位符 ${entry.content} 没有唯一的还原规则`);
+    if(!/^LSPHIDDEN_[a-z0-9]+_\d+$/i.test(entry.content))issues.push('有隐藏条目没有变成占位符');
+  });
+  if(!count)issues.push('未找到隐藏条目');
+  return {ok:!issues.length,hiddenCount:count,issues};
+}
+
+/** Browser/Node PNG tEXt V2/V3 character card reader and writer. */
+const encoder=new TextEncoder();
+const decoder=new TextDecoder('utf-8',{fatal:true});
+const SIGNATURE=Uint8Array.from([137,80,78,71,13,10,26,10]);
+const crcTable=(()=>{
+  const t=new Uint32Array(256);
+  for(let i=0;i<256;i++){let n=i;for(let j=0;j<8;j++)n=(n&1)?(n>>>1)^0xEDB88320:(n>>>1);t[i]=n>>>0;}
+  return t;
+})();
+function crc32(bytes){let c=0xFFFFFFFF;for(const b of bytes)c=crcTable[(c^b)&255]^(c>>>8);return (c^0xFFFFFFFF)>>>0;}
+function u32(input,pos){return ((input[pos]*0x1000000)+((input[pos+1]<<16)|(input[pos+2]<<8)|input[pos+3]))>>>0;}
+function put32(input,pos,n){input[pos]=(n>>>24)&255;input[pos+1]=(n>>>16)&255;input[pos+2]=(n>>>8)&255;input[pos+3]=n&255;}
+function concat(parts){let total=0;for(const a of parts)total+=a.length;const buf=new Uint8Array(total);let p=0;for(const a of parts){buf.set(a,p);p+=a.length;}return buf;}
+function asBytes(v){return v instanceof Uint8Array?v:new Uint8Array(v);}
+function toBase64(bytes){
+  // Encode via typed arrays; never spread large byte arrays into a JS call.
+  const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const result=new Uint8Array(Math.ceil(bytes.length/3)*4);
+  let i=0,j=0;
+  for(;i+2<bytes.length;i+=3){
+    const n=(bytes[i]<<16)|(bytes[i+1]<<8)|bytes[i+2];
+    result[j++]=alphabet.charCodeAt((n>>>18)&63);
+    result[j++]=alphabet.charCodeAt((n>>>12)&63);
+    result[j++]=alphabet.charCodeAt((n>>>6)&63);
+    result[j++]=alphabet.charCodeAt(n&63);
+  }
+  if(i<bytes.length){
+    const n=bytes[i]<<16|((i+1<bytes.length?bytes[i+1]:0)<<8);
+    result[j++]=alphabet.charCodeAt((n>>>18)&63);
+    result[j++]=alphabet.charCodeAt((n>>>12)&63);
+    result[j++]=i+1<bytes.length?alphabet.charCodeAt((n>>>6)&63):61;
+    result[j++]=61;
+  }
+  return new TextDecoder('ascii').decode(result);
+}
+function fromBase64(s){
+  if(typeof atob==='undefined')throw new Error('环境不支持 Base64');
+  const value=atob(s);const out=new Uint8Array(value.length);
+  for(let i=0;i<value.length;i++)out[i]=value.charCodeAt(i);
+  return out;
+}
+function typeOf(bytes){
+  // PNG tEXt keywords and character-card base64 are ASCII; native decode
+  // avoids call stack overflow in browsers with lower argument limits.
+  return new TextDecoder('windows-1252').decode(bytes);
+}
+function chunksOf(bytes){
+  for(let i=0;i<8;i++)if(bytes[i]!==SIGNATURE[i])throw new Error('不是 PNG 图片');
+  const out=[];let pos=8,ended=false;
+  while(pos+12<=bytes.length){
+    const n=u32(bytes,pos);
+    if(n>bytes.length-pos-12)throw new Error('PNG 数据长度不正确');
+    const type=typeOf(bytes.subarray(pos+4,pos+8));
+    out.push({type,data:bytes.subarray(pos+8,pos+8+n)});
+    pos+=n+12;
+    if(type==='IEND'){ended=true;break;}
+  }
+  if(!ended)throw new Error('PNG 缺少 IEND');
+  return out;
+}
+function decodeText(data){
+  const sep=data.indexOf(0);if(sep<0)return null;
+  return {keyword:typeOf(data.subarray(0,sep)),text:typeOf(data.subarray(sep+1))};
+}
+function makeChunk(type,data){
+  const buf=new Uint8Array(data.length+12);
+  put32(buf,0,data.length);for(let i=0;i<4;i++)buf[i+4]=type.charCodeAt(i);
+  buf.set(data,8);put32(buf,buf.length-4,crc32(buf.subarray(4,-4)));
+  return buf;
+}
+function latin1Bytes(value){
+  // Avoid huge temporary arrays when serializing large base64 metadata.
+  const out=new Uint8Array(value.length);
+  for(let i=0;i<value.length;i++)out[i]=value.charCodeAt(i);
+  return out;
+}
+function makeText(keyword,value){
+  return makeChunk('tEXt',concat([latin1Bytes(keyword),Uint8Array.of(0),latin1Bytes(value)]));
+}
+function keywordOfTextChunk(data){
+  const sep=data.indexOf(0);
+  if(sep<0)return '';
+  // PNG tEXt keyword is short ASCII; do not decode the entire old card data.
+  return typeOf(data.subarray(0,sep)).toLowerCase();
+}
+function findCardChunk(chunks){
+  const textChunks=chunks.filter(x=>x.type==='tEXt');
+  const chosen=textChunks.find(x=>keywordOfTextChunk(x.data)==='ccv3')
+    ||textChunks.find(x=>keywordOfTextChunk(x.data)==='chara');
+  return chosen?decodeText(chosen.data):null;
+}
+function hasCardChunk(chunks){
+  return chunks.some(x=>x.type==='tEXt' &&
+    ['chara','ccv3'].includes(keywordOfTextChunk(x.data)));
+}
+function readPngCard(input){
+  const chunks=chunksOf(asBytes(input)), meta=findCardChunk(chunks);
+  if(!meta)throw new Error('PNG 没有角色卡元数据 chara / ccv3');
+  return JSON.parse(decoder.decode(fromBase64(meta.text)));
+}
+function writePngCard(input,card){
+  const chunks=chunksOf(asBytes(input));
+  if(!hasCardChunk(chunks))throw new Error('PNG 不是角色卡');
+  const v2=toBase64(encoder.encode(JSON.stringify(card)));
+  const v3=toBase64(encoder.encode(JSON.stringify({...card,spec:'chara_card_v3',spec_version:'3.0'})));
+  const result=[SIGNATURE];
+  for(const part of chunks){
+    const key=part.type==='tEXt'?keywordOfTextChunk(part.data):null;
+    if(key==='chara'||key==='ccv3')continue;
+    if(part.type==='IEND'){result.push(makeText('chara',v2));result.push(makeText('ccv3',v3));}
+    result.push(makeChunk(part.type,part.data));
+  }
+  const image=concat(result);
+  if(JSON.stringify(readPngCard(image).data?.character_book)!==JSON.stringify(card.data?.character_book))
+    throw new Error('写入 PNG 后世界书校验失败');
+  return image;
+}
+
+
+(() => {
+  "use strict";
+  let sourceCard=null,sourcePng=null,sourceFileName="",originalEntries=[],overrides=new Map(),lastError="";
+  const $=id=>document.getElementById(id);
+  const status=text=>{$("status").textContent=text;};
+  const fail=(e,step)=>{
+    const message="【"+step+"】"+(e?.message||String(e))+"\n"+(e?.stack||"");
+    lastError=message;
+    $("error").hidden=false;
+    $("error").textContent=message;
+    status("失败：" + (e?.message||String(e))+"；请复制下方错误。");
+    console.error("[Lore Spoilers standalone]",step,e);
+  };
+  const safeName=text=>String(text||"Character").replace(/[\\/:*?"<>|]/g,"_").slice(0,90);
+  const uid=(entry,index)=>String(entry.id??entry.uid??index);
+  function updateCount(){
+    const n=[...overrides.values()].filter(x=>x==="hidden").length;
+    $("count").textContent="共 "+originalEntries.length+" 条；已隐藏 "+n+" 条；公开 "+(originalEntries.length-n)+" 条。";
+    $("publishPNG").disabled=!sourcePng || !n;
+    $("publishJSON").disabled=!sourceCard || !n;
+  }
+  function render(){
+    const query=$("search").value.toLowerCase().trim();
+    const matches=originalEntries.map((entry,index)=>({entry,index})).filter(({entry,index})=>
+      !query||[entry.comment,uid(entry,index),Array.isArray(entry.keys)?entry.keys.join(","):""].join(" ").toLowerCase().includes(query));
+    const area=$("rows");area.replaceChildren();
+    const frag=document.createDocumentFragment();
+    for(const {entry,index} of matches.slice(0,400)){
+      const id=uid(entry,index);
+      const row=document.createElement("div");row.className="row";
+      const name=document.createElement("label");
+      name.textContent=String(entry.comment|| (Array.isArray(entry.keys)?entry.keys.join(", "):"") || "(未命名条目)");
+      const small=document.createElement("small");small.textContent="条目 ID: "+id;
+      name.append(small);
+      const select=document.createElement("select");
+      select.setAttribute("aria-label","选择条目 "+id+" 的可见性");
+      select.add(new Option("公开","public"));select.add(new Option("🔒 隐藏 · AI 可读","hidden"));
+      select.value=overrides.get(id)||"public";
+      select.addEventListener("change",()=>{overrides.set(id,select.value);updateCount();});
+      row.append(name,select);frag.append(row);
+    }
+    area.append(frag);
+    if(matches.length>400){
+      const info=document.createElement("p");info.className="muted sub";
+      info.textContent="显示前 400 / "+matches.length+" 条。请搜索其他条目。";
+      area.append(info);
+    }
+    updateCount();
+  }
+  $("source").addEventListener("change",async()=>{
+    sourceCard=null;sourcePng=null;sourceFileName="";originalEntries=[];overrides.clear();
+    $("editor").hidden=true;$("error").hidden=true;updateCount();
+    const file=$("source").files?.[0];if(!file)return;
+    try{
+      status("正在读取原始角色卡……");
+      const bytes=new Uint8Array(await file.arrayBuffer());
+      const png=file.name.toLowerCase().endsWith(".png")||file.type==="image/png";
+      sourceCard=png?readPngCard(bytes):JSON.parse(new TextDecoder("utf-8").decode(bytes));
+      sourcePng=png?bytes:null;sourceFileName=file.name;
+      if(sourceCard?.data?.extensions?.lore_spoilers_publish)
+        throw new Error("检测到这是已发布的防剧透卡。请导入作者自己的【原始角色卡】，避免重复混淆。");
+      const book=sourceCard?.data?.character_book;
+      if(!Array.isArray(book?.entries))
+        throw new Error("角色卡未嵌入主世界书。请先在 SillyTavern 绑定世界书并正常保存 / 导出原卡。");
+      originalEntries=book.entries;
+      originalEntries.forEach((entry,index)=>overrides.set(uid(entry,index),entry.extensions?.lore_spoilers_visibility==="hidden"?"hidden":"public"));
+      $("fileInfo").textContent="已读取："+file.name+"（"+(file.size/1024/1024).toFixed(2)+" MB）｜角色："+String(sourceCard.data.name||"未命名")+"｜世界书："+String(book.name||"无名称");
+      $("editor").hidden=false;render();
+      status("导入成功。现在可以逐条设置隐藏，再发布副本。");
+    }catch(e){
+      sourceCard=null;sourcePng=null;originalEntries=[];overrides.clear();
+      $("editor").hidden=true;updateCount();fail(e,"读取原卡");
+    }
+  });
+  $("search").addEventListener("input",render);
+  for(const [button,value] of [["allPublic","public"],["allHidden","hidden"]]){
+    $(button).addEventListener("click",()=>{for(const id of overrides.keys())overrides.set(id,value);render();});
+  }
+  function download(blob,name){
+    const url=URL.createObjectURL(blob);
+    const anchor=document.createElement("a");
+    anchor.href=url;anchor.download=name;document.body.append(anchor);anchor.click();anchor.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),60_000);
+  }
+  async function publish(format){
+    let step="准备数据";
+    $("error").hidden=true;
+    $("publishPNG").disabled=true;$("publishJSON").disabled=true;
+    try{
+      status("正在处理 "+(sourceFileName||"角色卡")+"（大卡片可能占用较多内存）……");
+      await new Promise(resolve=>setTimeout(resolve,50));
+      step="生成防剧透副本";
+      const values=Object.fromEntries(overrides);
+      const {card,report}=publishCard(sourceCard,{visibilityByUid:values});
+      step="检查隐藏和还原";
+      const audit=auditPublishedCard(card);
+      if(!audit.ok||audit.hiddenCount!==report.hiddenCount)throw new Error(audit.issues.join("; ")||"隐藏条目校验失败");
+      const filename=safeName(card.data?.name)+"-防剧透版.";
+      if(format==="json"){
+        step="导出 JSON";
+        const json=JSON.stringify(card,null,2);
+        download(new Blob([json],{type:"application/json;charset=utf-8"}),filename+"json");
+      }else{
+        if(!sourcePng)throw new Error("你导入的是 JSON。请导入原始 PNG 才能生成 PNG。");
+        step="生成 PNG 图像及内嵌世界书";
+        const bytes=writePngCard(sourcePng,card);
+        step="导出 PNG";
+        download(new Blob([bytes],{type:"image/png"}),filename+"png");
+      }
+      status("发布完成：隐藏 "+report.hiddenCount+" 条，保留 "+report.publicCount+" 条公开条目。原始文件未修改。");
+    }catch(e){fail(e,step)}
+    finally{updateCount()}
+  }
+  $("publishPNG").addEventListener("click",()=>publish("png"));
+  $("publishJSON").addEventListener("click",()=>publish("json"));
+})();
+
+</script></body></html>
