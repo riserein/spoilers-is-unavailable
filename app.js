@@ -7,8 +7,8 @@
  * prompt generation or defend against editing/exporting/inspecting the files.
  */
 import { extension_settings } from "../../../extensions.js";
-import { publishCard, auditPublishedCard } from "./publisher.js?v=2.0.4";
-import { readPngCard, writePngCard } from "./png-card.js?v=2.0.4";
+import { publishCard, auditPublishedCard } from "./publisher.js?v=2.0.5";
+import { readPngCard, writePngCard } from "./png-card.js?v=2.0.5";
 import { saveSettingsDebounced, characters, this_chid, getRequestHeaders } from "../../../../script.js";
 import { loadWorldInfo, saveWorldInfo, world_names } from "../../../world-info.js";
 
@@ -26,6 +26,7 @@ let syncing = false;
 let waiting = false;
 let search = "";
 let noticeShown = false;
+let lastSyncedBook = null;
 
 function settings() {
     extension_settings[EXT] ??= {};
@@ -151,7 +152,7 @@ function buildToolbar(book, data) {
     const header = document.createElement("div");
     header.className = "lsp-toolbar-head";
     const title = document.createElement("h4");
-    title.textContent = "🔐 逐条权限 — " + book;
+    title.textContent = "🔐 逐条权限 — " + book + " · v2.0.5";
     const count = document.createElement("span");
     count.className = "lsp-secret-count";
     count.textContent = `${hiddenCount} 隐藏 / ${entries.length} 条`;
@@ -266,6 +267,7 @@ async function sync() {
         buildToolbar(book, data);
     } catch (error) {
         console.error(`[${EXT}] sync failed`, error);
+        reportPublishError(error, "同步世界书界面");
         if (!noticeShown) {
             notify("无法同步世界书视图；请检查控制台，原文可能在界面中可见。", "warning");
             noticeShown = true;
@@ -423,46 +425,69 @@ async function publishSelectedCharacter(format) {
     }
 }
 
-function reportPublishError(error) {
+function reportPublishError(error, operation = "发布角色卡") {
+    // Keep diagnostics outside #lsp_world_toolbar: buildToolbar replaces its children.
+    const stack = String(error?.cause?.stack || error?.stack || "(无法获取调用栈)");
+    const message = String(error?.message || error);
     const diagnostics = [
-        "Lore Spoilers v2.0.4 · 发布错误报告",
-        "失败步骤：" + (error?.lspStage || "未知"),
-        "错误信息：" + (error?.message || String(error)),
+        "Lore Spoilers v2.0.5 错误诊断",
+        "操作：" + operation,
+        "阶段：" + (error?.lspStage || "未进入导出阶段 / 其他操作"),
+        "信息：" + message,
+        "时间：" + new Date().toLocaleString(),
         "",
-        "具体调用位置：",
-        error?.cause?.stack || error?.stack || "(无法读取调用堆栈)",
+        "错误调用堆栈：",
+        stack,
+        "",
+        "复制本报告以定位问题。无需提供任何世界书正文。"
     ].join("\n");
-    let panel = document.querySelector("#lsp_publish_error");
-    if (!panel) {
-        panel = document.createElement("section");
-        panel.id = "lsp_publish_error";
-        panel.style.cssText = "margin:10px 0;padding:12px;border:2px solid #c66e59;border-radius:8px;background:var(--SmartThemeBlurTintColor,#362824);";
-        const title = document.createElement("strong");
-        title.textContent = "⚠️ 防剧透角色卡导出失败 · 详细诊断";
-        const pre = document.createElement("pre");
-        pre.style.cssText = "white-space:pre-wrap;overflow-wrap:anywhere;max-height:230px;overflow:auto;font-size:12px;user-select:text;";
-        pre.className = "lsp_error_text";
-        const button = document.createElement("button");
-        button.type = "button";
-        button.textContent = "复制错误报告";
-        button.className = "menu_button";
-        button.addEventListener("click", async () => {
-            const text = panel.querySelector(".lsp_error_text")?.textContent || "";
-            try {
-                await navigator.clipboard.writeText(text);
-                notify("错误报告已复制", "success");
-            } catch(e) {
-                window.prompt("复制错误报告：", text);
-            }
-        });
-        panel.append(title, pre, button);
+    console.error("[Lore Spoilers diagnostic]", diagnostics, error);
+    try {
+        let overlay = document.getElementById("lsp_fatal_diagnostic");
+        if (!overlay) {
+            overlay = document.createElement("section");
+            overlay.id = "lsp_fatal_diagnostic";
+            overlay.setAttribute("role", "alert");
+            overlay.style.cssText = [
+                "position:fixed","z-index:2147483600","top:12px","left:12px",
+                "right:12px","margin:auto","max-width:740px","max-height:72vh",
+                "overflow:auto","padding:16px","border:2px solid #d47d70",
+                "border-radius:12px","background:#272224","color:#fff",
+                "box-shadow:0 6px 40px #0008","font-size:14px"
+            ].join(";");
+            const heading = document.createElement("strong");
+            heading.textContent = "Lore Spoilers 出错 · 诊断已保留在此窗口";
+            const close = document.createElement("button");
+            close.type = "button";
+            close.textContent = "关闭";
+            close.className = "menu_button";
+            close.style.float = "right";
+            close.addEventListener("click", () => overlay.remove());
+            const pre = document.createElement("pre");
+            pre.className = "lsp_report_body";
+            pre.style.cssText = "white-space:pre-wrap;word-break:break-word;user-select:text;max-height:48vh;overflow:auto;font-size:12px;";
+            const copy = document.createElement("button");
+            copy.type = "button";
+            copy.className = "menu_button";
+            copy.textContent = "复制错误报告";
+            copy.addEventListener("click", async () => {
+                const body = overlay.querySelector(".lsp_report_body")?.textContent || "";
+                try {
+                    await navigator.clipboard.writeText(body);
+                    if (typeof toastr !== "undefined") toastr.success("错误报告已复制");
+                } catch {
+                    window.prompt("复制以下错误报告：", body);
+                }
+            });
+            overlay.append(heading, close, pre, copy);
+        }
+        overlay.querySelector(".lsp_report_body").textContent = diagnostics;
+        if (!overlay.isConnected) document.body.appendChild(overlay);
+    } catch (displayError) {
+        console.error("[Lore Spoilers] Diagnostic UI also failed:", displayError);
+        window.alert(diagnostics.slice(0, 4000));
     }
-    panel.querySelector(".lsp_error_text").textContent = diagnostics;
-    const toolbar = document.querySelector("#lsp_world_toolbar");
-    (toolbar || document.querySelector("#lsp_settings") || document.body).prepend(panel);
-    panel.scrollIntoView({ block: "nearest" });
 }
-
 function bindEvents() {
     document.addEventListener("click", event => {
         if (event.target?.closest?.(".lsp-inline-toggle")) event.stopPropagation();
@@ -474,14 +499,15 @@ function bindEvents() {
         else if (action === "export-png" || action === "export-json") {
             publishSelectedCharacter(action === "export-png" ? "png" : "json").catch(error => {
                 console.error("[lore-spoilers-selective] publish failed", error, error?.cause);
-                reportPublishError(error);
+                reportPublishError(error, "发布防剧透角色卡");
                 notify(error.message || "发布失败，请查看控制台", "error");
             });
         }
         else if (action === HIDDEN || action === PUBLIC) {
             bulkVisibility(action).catch(error => {
                 console.error(`[${EXT}] bulk failed`, error);
-                notify("批量保存失败，查看控制台。", "error");
+                reportPublishError(error, "批量修改世界书可见性");
+                notify("批量保存失败，查看诊断窗口", "error");
             });
         }
     }, true);
@@ -492,7 +518,8 @@ function bindEvents() {
         event.stopPropagation();
         setVisibility(target.dataset.uid, target.value).catch(error => {
             console.error(`[${EXT}] set visibility failed`, error);
-            notify("保存标记失败，查看控制台。", "error");
+            reportPublishError(error, "修改单条世界书权限");
+            notify("保存标记失败，查看诊断窗口", "error");
             scheduleSync();
         });
     }, true);
@@ -500,10 +527,15 @@ function bindEvents() {
     const list = document.querySelector("#world_popup_entries_list");
     if (list) {
         const observer = new MutationObserver(mutations => {
-            // Only react to changes in entry layout, not text-area input or checkbox changes.
-            if (mutations.some(m => m.type === "childList")) scheduleSync();
+            // Observe only actual entry row additions/removals.
+            // Our own inline selector injection MUST NOT reschedule sync().
+            if (mutations.some(m => [...m.addedNodes, ...m.removedNodes].some(
+                node => node.nodeType === 1 && (
+                    node.matches?.(".world_entry") || node.querySelector?.(".world_entry")
+                )
+            ))) scheduleSync();
         });
-        observer.observe(list, { childList: true, subtree: true });
+        observer.observe(list, { childList: true, subtree: false });
     }
 }
 
@@ -532,5 +564,6 @@ jQuery(async () => {
         console.info(`[${EXT}] Author publisher v2 ready (not encryption)`);
     } catch (error) {
         console.error(`[${EXT}] Could not initialize`, error);
+        reportPublishError(error, "插件初始化");
     }
 });
