@@ -7,8 +7,8 @@
  * prompt generation or defend against editing/exporting/inspecting the files.
  */
 import { extension_settings } from "../../../extensions.js";
-import { publishCard, auditPublishedCard } from "./publisher.js";
-import { readPngCard, writePngCard } from "./png-card.js";
+import { publishCard, auditPublishedCard } from "./publisher.js?v=2.0.4";
+import { readPngCard, writePngCard } from "./png-card.js?v=2.0.4";
 import { saveSettingsDebounced, characters, this_chid, getRequestHeaders } from "../../../../script.js";
 import { loadWorldInfo, saveWorldInfo, world_names } from "../../../world-info.js";
 
@@ -361,6 +361,8 @@ function downloadFile(data, name, mime) {
 }
 
 async function publishSelectedCharacter(format) {
+    let stage = "开始发布";
+    try {
     if (!settings().enabled || !settings().authorMode) throw new Error("请启用插件及作者模式");
     const book = bookName();
     if (!book) throw new Error("请先打开并选择角色绑定的主世界书");
@@ -370,6 +372,7 @@ async function publishSelectedCharacter(format) {
     if (attached && attached !== book) {
         throw new Error("角色绑定的是「" + attached + "」，当前编辑的是「" + book + "」");
     }
+    stage = "读取世界书";
     const worldData = await loadWorldInfo(book);
     if (!worldData?.entries) throw new Error("世界书没有加载成功");
     const visibility = Object.fromEntries(
@@ -384,6 +387,7 @@ async function publishSelectedCharacter(format) {
         "\n角色正则本身含原文，不属于加密。继续吗？"
     );
     if (!approved) return;
+    stage = "向 SillyTavern 请求原始角色 PNG";
     const response = await fetch('/api/characters/export', {
         method:'POST',
         headers:getRequestHeaders(),
@@ -391,20 +395,72 @@ async function publishSelectedCharacter(format) {
     });
     if(!response.ok)throw new Error("读取角色 PNG 失败，HTTP "+response.status);
     const original = new Uint8Array(await response.arrayBuffer());
+    stage = "解析原始 PNG 角色卡";
     const input = readPngCard(original);
+    stage = "生成隐藏条目与还原正则";
     const {card,report} = publishCard(input, {visibilityByUid: visibility,expectedWorld:book});
+    stage = "校验隐藏条目与正则规则";
     const audit = auditPublishedCard(card);
     if(!audit.ok || audit.hiddenCount!==report.hiddenCount) {
         throw new Error("发布校验失败："+audit.issues.join("；"));
     }
     const safe = String(character.name || "Character").replace(/[\\/:*?"<>|]/g,"_").slice(0,72);
     if(format==="png") {
+        stage = "将防剧透内容写入 PNG";
         const image = writePngCard(original, card);
+        stage = "下载防剧透 PNG";
         downloadFile(image, safe+"-防剧透版.png", "image/png");
     } else {
+        stage = "下载防剧透 JSON";
         downloadFile(JSON.stringify(card,null,2),safe+"-防剧透版.json","application/json;charset=utf-8");
     }
     notify("成功导出：隐藏 "+report.hiddenCount+" 条。原文件未修改。","success");
+    } catch(error) {
+        const original = error instanceof Error ? error : new Error(String(error));
+        const wrapped = new Error("[" + stage + "] " + original.message, { cause: original });
+        wrapped.lspStage = stage;
+        throw wrapped;
+    }
+}
+
+function reportPublishError(error) {
+    const diagnostics = [
+        "Lore Spoilers v2.0.4 · 发布错误报告",
+        "失败步骤：" + (error?.lspStage || "未知"),
+        "错误信息：" + (error?.message || String(error)),
+        "",
+        "具体调用位置：",
+        error?.cause?.stack || error?.stack || "(无法读取调用堆栈)",
+    ].join("\n");
+    let panel = document.querySelector("#lsp_publish_error");
+    if (!panel) {
+        panel = document.createElement("section");
+        panel.id = "lsp_publish_error";
+        panel.style.cssText = "margin:10px 0;padding:12px;border:2px solid #c66e59;border-radius:8px;background:var(--SmartThemeBlurTintColor,#362824);";
+        const title = document.createElement("strong");
+        title.textContent = "⚠️ 防剧透角色卡导出失败 · 详细诊断";
+        const pre = document.createElement("pre");
+        pre.style.cssText = "white-space:pre-wrap;overflow-wrap:anywhere;max-height:230px;overflow:auto;font-size:12px;user-select:text;";
+        pre.className = "lsp_error_text";
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = "复制错误报告";
+        button.className = "menu_button";
+        button.addEventListener("click", async () => {
+            const text = panel.querySelector(".lsp_error_text")?.textContent || "";
+            try {
+                await navigator.clipboard.writeText(text);
+                notify("错误报告已复制", "success");
+            } catch(e) {
+                window.prompt("复制错误报告：", text);
+            }
+        });
+        panel.append(title, pre, button);
+    }
+    panel.querySelector(".lsp_error_text").textContent = diagnostics;
+    const toolbar = document.querySelector("#lsp_world_toolbar");
+    (toolbar || document.querySelector("#lsp_settings") || document.body).prepend(panel);
+    panel.scrollIntoView({ block: "nearest" });
 }
 
 function bindEvents() {
@@ -417,7 +473,8 @@ function bindEvents() {
         if (action === "audit") audit();
         else if (action === "export-png" || action === "export-json") {
             publishSelectedCharacter(action === "export-png" ? "png" : "json").catch(error => {
-                console.error("[lore-spoilers-selective] publish failed", error);
+                console.error("[lore-spoilers-selective] publish failed", error, error?.cause);
+                reportPublishError(error);
                 notify(error.message || "发布失败，请查看控制台", "error");
             });
         }
