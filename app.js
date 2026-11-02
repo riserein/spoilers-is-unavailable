@@ -152,7 +152,7 @@ function buildToolbar(book, data) {
     const header = document.createElement("div");
     header.className = "lsp-toolbar-head";
     const title = document.createElement("h4");
-    title.textContent = "🔐 逐条权限 — " + book + " · v2.0.5";
+    title.textContent = "🔐 逐条权限 — " + book + " · v2.0.6";
     const count = document.createElement("span");
     count.className = "lsp-secret-count";
     count.textContent = `${hiddenCount} 隐藏 / ${entries.length} 条`;
@@ -389,16 +389,18 @@ async function publishSelectedCharacter(format) {
         "\n角色正则本身含原文，不属于加密。继续吗？"
     );
     if (!approved) return;
-    stage = "向 SillyTavern 请求原始角色 PNG";
+    // Prefer SillyTavern's native JSON export as the source of truth.
+    // The PNG is used only as a visual/image carrier and is not decoded to
+    // obtain its old embedded character metadata.
+    stage = "从 SillyTavern 读取角色卡 JSON";
     const response = await fetch('/api/characters/export', {
-        method:'POST',
-        headers:getRequestHeaders(),
-        body:JSON.stringify({avatar_url:character.avatar,format:'png'}),
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ avatar_url: character.avatar, format: 'json' }),
     });
-    if(!response.ok)throw new Error("读取角色 PNG 失败，HTTP "+response.status);
-    const original = new Uint8Array(await response.arrayBuffer());
-    stage = "解析原始 PNG 角色卡";
-    const input = readPngCard(original);
+    if (!response.ok) throw new Error("读取角色 JSON 失败，HTTP " + response.status);
+    stage = "解析角色卡 JSON";
+    const input = await response.json();
     stage = "生成隐藏条目与还原正则";
     const {card,report} = publishCard(input, {visibilityByUid: visibility,expectedWorld:book});
     stage = "校验隐藏条目与正则规则";
@@ -408,6 +410,14 @@ async function publishSelectedCharacter(format) {
     }
     const safe = String(character.name || "Character").replace(/[\\/:*?"<>|]/g,"_").slice(0,72);
     if(format==="png") {
+        stage = "向 SillyTavern 请求角色图片 PNG";
+        const pngResponse = await fetch('/api/characters/export', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ avatar_url: character.avatar, format: 'png' }),
+        });
+        if (!pngResponse.ok) throw new Error("读取角色 PNG 失败，HTTP " + pngResponse.status);
+        const original = new Uint8Array(await pngResponse.arrayBuffer());
         stage = "将防剧透内容写入 PNG";
         const image = writePngCard(original, card);
         stage = "下载防剧透 PNG";
@@ -430,7 +440,7 @@ function reportPublishError(error, operation = "发布角色卡") {
     const stack = String(error?.cause?.stack || error?.stack || "(无法获取调用栈)");
     const message = String(error?.message || error);
     const diagnostics = [
-        "Lore Spoilers v2.0.5 错误诊断",
+        "Lore Spoilers v2.0.6 错误诊断",
         "操作：" + operation,
         "阶段：" + (error?.lspStage || "未进入导出阶段 / 其他操作"),
         "信息：" + message,
