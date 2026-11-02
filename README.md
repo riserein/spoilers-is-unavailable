@@ -1,6 +1,11 @@
-# Lore Spoilers · 作者防剧透发布器 v2.0.0
+# Lore Spoilers · 作者防剧透发布器 v2.0.2
 
 原版灵感来自 [cha1latte/lore-spoilers](https://github.com/cha1latte/lore-spoilers)（MIT）。这是仅作者需要安装的「逐条标记 + 导出防剧透角色卡」插件。
+
+## 故障修复 (v2.0.2)
+- 修复 v2.0.0 PNG 数据解析函数的括号错误（Unexpected token ';'. Expected ')'），该错误会导致整个扩展无法加载。
+- 若扩展显示为灰色且无法勾选，请在 SillyTavern 的「扩展 → 管理扩展」执行「更新全部」，刷新浏览器后重新查看；仍有报错则复制 v2.0.1+ 启动诊断信息。
+- 此次修复不更改原版世界书或已发布的角色卡数据。
 
 ## 安装
 打开 SillyTavern → 扩展 → 安装扩展，填入：
