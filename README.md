@@ -1,4 +1,4 @@
-# Lore Spoilers · 作者防剧透发布器 v2.0.3
+# Lore Spoilers · 作者防剧透发布器 v2.0.4
 
 原版灵感来自 [cha1latte/lore-spoilers](https://github.com/cha1latte/lore-spoilers)（MIT）。这是仅作者需要安装的「逐条标记 + 导出防剧透角色卡」插件。
 
@@ -41,3 +41,5 @@ MIT，保留上游项目署名；详见 LICENSE。
 
 ## 修复日志
 - **v2.0.3：** 修复大型角色卡 PNG 元数据解码时的 `Maximum call stack size exceeded`；改为 16 KiB 分块读取，输出元数据改为循环编码以避免大量中间数组；补充大世界书的回归测试。
+
+- **v2.0.4：** 彻底移除 PNG 字节转换中的数组展开调用、用 TypedArray 编码 Base64；新增导出失败阶段/调用堆栈可复制面板，并强制缓存失效。若仍报错，将错误报告发给维护者定位；更新后务必确认扩展列表显示 2.0.4。
