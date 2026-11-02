@@ -77,9 +77,21 @@ function latin1Bytes(value){
 function makeText(keyword,value){
   return makeChunk('tEXt',concat([latin1Bytes(keyword),Uint8Array.of(0),latin1Bytes(value)]));
 }
+function keywordOfTextChunk(data){
+  const sep=data.indexOf(0);
+  if(sep<0)return '';
+  // PNG tEXt keyword is short ASCII; do not decode the entire old card data.
+  return typeOf(data.subarray(0,sep)).toLowerCase();
+}
 function findCardChunk(chunks){
-  const texts=chunks.filter(x=>x.type==='tEXt').map(x=>decodeText(x.data)).filter(Boolean);
-  return texts.find(x=>x.keyword.toLowerCase()==='ccv3')||texts.find(x=>x.keyword.toLowerCase()==='chara');
+  const textChunks=chunks.filter(x=>x.type==='tEXt');
+  const chosen=textChunks.find(x=>keywordOfTextChunk(x.data)==='ccv3')
+    ||textChunks.find(x=>keywordOfTextChunk(x.data)==='chara');
+  return chosen?decodeText(chosen.data):null;
+}
+function hasCardChunk(chunks){
+  return chunks.some(x=>x.type==='tEXt' &&
+    ['chara','ccv3'].includes(keywordOfTextChunk(x.data)));
 }
 export function readPngCard(input){
   const chunks=chunksOf(asBytes(input)), meta=findCardChunk(chunks);
@@ -88,12 +100,12 @@ export function readPngCard(input){
 }
 export function writePngCard(input,card){
   const chunks=chunksOf(asBytes(input));
-  if(!findCardChunk(chunks))throw new Error('PNG 不是角色卡');
+  if(!hasCardChunk(chunks))throw new Error('PNG 不是角色卡');
   const v2=toBase64(encoder.encode(JSON.stringify(card)));
   const v3=toBase64(encoder.encode(JSON.stringify({...card,spec:'chara_card_v3',spec_version:'3.0'})));
   const result=[SIGNATURE];
   for(const part of chunks){
-    const key=part.type==='tEXt'?decodeText(part.data)?.keyword?.toLowerCase():null;
+    const key=part.type==='tEXt'?keywordOfTextChunk(part.data):null;
     if(key==='chara'||key==='ccv3')continue;
     if(part.type==='IEND'){result.push(makeText('chara',v2));result.push(makeText('ccv3',v3));}
     result.push(makeChunk(part.type,part.data));
