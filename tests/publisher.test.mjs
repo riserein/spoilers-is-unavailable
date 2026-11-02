@@ -60,3 +60,18 @@ test('PNG writes synchronised chara and ccv3 while retaining image',()=>{
   assert.ok(Buffer.from(result).includes(Buffer.from('IHDR')));
   assert.ok(Buffer.from(result).includes(Buffer.from('IDAT')));
 });
+
+
+test('large PNG character metadata is read and written without call stack overflow',()=>{
+  // A real-world character lorebook can easily exceed 128 KiB after Base64 encoding.
+  const large=card();
+  large.data.character_book.entries[1].content='隐秘的身世与剧情信息。'.repeat(25000);
+  const image=fixture(large);
+  assert.ok(image.length>200000);
+  assert.equal(readPngCard(image).data.character_book.entries[1].content,large.data.character_book.entries[1].content);
+  const published=publishCard(large).card;
+  const output=writePngCard(image,published);
+  const parsed=readPngCard(output);
+  assert.match(parsed.data.character_book.entries[1].content,/^LSPHIDDEN_/);
+  assert.equal(parsed.data.extensions.regex_scripts.at(-1).replaceString,large.data.character_book.entries[1].content);
+});
