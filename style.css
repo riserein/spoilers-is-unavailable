@@ -1,0 +1,25 @@
+/* Lore Spoilers · Selective: player-UI spoiler masking only */
+.lsp-settings { margin: 8px 0; }
+.lsp-settings-note, .lsp-danger-note { font-size: .88em; line-height: 1.5; margin: 10px 0; }
+.lsp-danger-note { border-left: 3px solid #b06e52; padding: 8px 10px; background: rgba(176,110,82,.10); }
+.lsp-toolbar { padding: 10px 12px; margin: 8px 0; border: 1px solid var(--SmartThemeBorderColor, #777); border-radius: 9px; background: var(--SmartThemeBlurTintColor, rgba(40,40,40,.16)); }
+.lsp-toolbar-head { display:flex; align-items:center; gap:8px; justify-content:space-between; flex-wrap:wrap; }
+.lsp-toolbar h4 { font-size: 1em; margin:0; }
+.lsp-toolbar-actions { display:flex; gap:6px; flex-wrap:wrap; margin:8px 0; }
+.lsp-toolbar-actions button { padding: 5px 9px; cursor:pointer; }
+.lsp-toolbar input.lsp-search { width:100%; max-width:100%; margin:4px 0 8px; box-sizing:border-box; }
+.lsp-toolbar-caption { font-size:.84em; opacity:.8; line-height:1.45; }
+.lsp-list { max-height: 320px; overflow:auto; border:1px solid var(--SmartThemeBorderColor, #777); border-radius:6px; }
+.lsp-list-item { display:flex; gap:10px; justify-content:space-between; align-items:center; padding:7px 9px; border-bottom:1px solid var(--SmartThemeBorderColor, #777); }
+.lsp-list-item:last-child { border-bottom:0; }
+.lsp-entry-title { flex:1; min-width:0; overflow-wrap:anywhere; font-size:.93em; }
+.lsp-entry-title small { opacity:.65; margin-left:5px; }
+.lsp-inline-toggle { display:flex; align-items:center; gap:5px; margin:0 8px; font-size:12px; flex:0 0 auto; }
+.lsp-inline-toggle select,.lsp-list-item select { width:auto; max-width:145px; min-width:100px; font-size:12px; cursor:pointer; }
+.lsp-list-item select { flex:0 0 auto; }
+.lsp-secret-count { font-weight:600; }
+.lsp-private .lsp-inline-toggle select { border-color:#b06e52; }
+html.lsp-viewer-mode #world_popup_entries_list .world_entry:not(.lsp-checked) { visibility:hidden !important; }
+html.lsp-viewer-mode #world_popup_entries_list .world_entry.lsp-private { display:none !important; }
+html.lsp-viewer-mode #lsp_world_toolbar { display:none !important; }
+@media (max-width:650px) { .lsp-list-item { align-items:flex-start; } .lsp-inline-toggle select { max-width:105px; } }
