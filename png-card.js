@@ -8,7 +8,7 @@ const crcTable=(()=>{
   return t;
 })();
 function crc32(bytes){let c=0xFFFFFFFF;for(const b of bytes)c=crcTable[(c^b)&255]^(c>>>8);return (c^0xFFFFFFFF)>>>0;}
-function u32(input,pos){return ((input[pos]*0x1000000)+((input[pos+1]<<16)|(input[pos+2]<<8)|input[pos+3])>>>0;}
+function u32(input,pos){return ((input[pos]*0x1000000)+((input[pos+1]<<16)|(input[pos+2]<<8)|input[pos+3]))>>>0;}
 function put32(input,pos,n){input[pos]=(n>>>24)&255;input[pos+1]=(n>>>16)&255;input[pos+2]=(n>>>8)&255;input[pos+3]=n&255;}
 function concat(parts){let total=0;for(const a of parts)total+=a.length;const buf=new Uint8Array(total);let p=0;for(const a of parts){buf.set(a,p);p+=a.length;}return buf;}
 function asBytes(v){return v instanceof Uint8Array?v:new Uint8Array(v);}
