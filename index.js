@@ -7,7 +7,9 @@
  * prompt generation or defend against editing/exporting/inspecting the files.
  */
 import { extension_settings } from "../../../extensions.js";
-import { saveSettingsDebounced } from "../../../../script.js";
+import { publishCard, auditPublishedCard } from "./publisher.js";
+import { readPngCard, writePngCard } from "./png-card.js";
+import { saveSettingsDebounced, characters, this_chid, getRequestHeaders } from "../../../../script.js";
 import { loadWorldInfo, saveWorldInfo, world_names } from "../../../world-info.js";
 
 const EXT = "lore-spoilers-selective";
@@ -15,7 +17,7 @@ const SETTINGS_HTML_URL = new URL("./example.html", import.meta.url).href;
 const FIELD = "lore_spoilers_visibility";
 const HIDDEN = "hidden";
 const PUBLIC = "public";
-const DEFAULTS = { enabled: true, authorMode: false };
+const DEFAULTS = { enabled: true, authorMode: true };
 
 let currentBook = "";
 let currentData = null;
@@ -76,7 +78,7 @@ function createSelect(value, className, uid) {
     select.add(publicOption);
     select.add(hiddenOption);
     select.value = value;
-    select.title = "仅影响安装本扩展的玩家界面；不会删除或加密原文";
+    select.title = "作者端标记，发布时将隐藏正文移至角色正则。不是加密。";
     return select;
 }
 
@@ -161,7 +163,9 @@ function buildToolbar(book, data) {
     const actionSpecs = [
         ["公开全部", PUBLIC],
         ["隐藏全部", HIDDEN],
-        ["检查导出风险", "audit"],
+        ["📦 发布防剧透 PNG", "export-png"],
+        ["📄 发布防剧透 JSON", "export-json"],
+        ["检查发布条件", "audit"],
     ];
     for (const [label, action] of actionSpecs) {
         const button = document.createElement("button");
@@ -183,7 +187,7 @@ function buildToolbar(book, data) {
 
     const caption = document.createElement("p");
     caption.className = "lsp-toolbar-caption";
-    caption.textContent = "“隐藏”不会阻止 AI 读取或触发条目，只在装有此扩展的界面中隐藏。标记存放在世界书条目的扩展字段内。";
+    caption.textContent = "点击发布防剧透卡，将隐藏正文替换为占位符；原文由内嵌角色正则在 AI 的 WORLD_INFO 提示词阶段还原。玩家不需安装此插件，但需要授权角色正则。此方案不是加密。";
     panel.append(caption);
 
     const container = document.createElement("div");
@@ -335,12 +339,72 @@ async function bulkVisibility(visibility) {
 function audit() {
     const entries = Object.values(currentData?.entries || {});
     const hidden = entries.filter(isHidden);
+    const character = characters?.[this_chid];
+    const bound = character?.data?.extensions?.world || "（未绑定）";
     window.alert(
-        `世界书「${currentBook}」\n共 ${entries.length} 条，其中标记隐藏 ${hidden.length} 条。\n\n` +
-        "注意：本扩展不加密正文！\n导出的角色卡 PNG/JSON 与世界书 JSON 仍然包含这些隐藏条目的原始文本。\n" +
-        "玩家不安装扩展、关闭扩展或查看文件/开发者工具，都可以读到原文。\n\n" +
-        "若要真正对玩家保密，必须由作者的服务端保管秘密并代为调用 AI。"
+        "世界书：" + currentBook + "\n角色：" + (character?.name || "未选择") +
+        "\n绑定主世界书：" + bound + "\n隐藏：" + hidden.length + " / " + entries.length +
+        "\n\n发布后世界书隐藏正文变成占位符；原文保存在卡内角色正则，AI 需要玩家授权才能还原。" +
+        "\n玩家无需安装此作者插件，但能从正则里提取文本。本方案不是加密。"
     );
+}
+
+function downloadFile(data, name, mime) {
+    const objectUrl = URL.createObjectURL(new Blob([data], {type: mime}));
+    const a = document.createElement("a");
+    a.href = objectUrl;
+    a.download = name;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+}
+
+async function publishSelectedCharacter(format) {
+    if (!settings().enabled || !settings().authorMode) throw new Error("请启用插件及作者模式");
+    const book = bookName();
+    if (!book) throw new Error("请先打开并选择角色绑定的主世界书");
+    const character = characters?.[this_chid];
+    if (!character?.avatar) throw new Error("先选中要发布的角色");
+    const attached = character.data?.extensions?.world;
+    if (attached && attached !== book) {
+        throw new Error("角色绑定的是「" + attached + "」，当前编辑的是「" + book + "」");
+    }
+    const worldData = await loadWorldInfo(book);
+    if (!worldData?.entries) throw new Error("世界书没有加载成功");
+    const visibility = Object.fromEntries(
+        Object.entries(worldData.entries).map(([uid,entry])=>[String(uid),isHidden(entry) ? HIDDEN : PUBLIC])
+    );
+    const hiddenCount = Object.values(visibility).filter(v=>v===HIDDEN).length;
+    if (!hiddenCount) throw new Error("请先标记需要隐藏的世界书条目");
+    const approved = window.confirm(
+        "即将为「" + character.name + "」生成防剧透 " + format.toUpperCase() +
+        "\n隐藏正文：" + hiddenCount + " 条；作者原世界书及角色卡不会被修改。" +
+        "\n\n玩家无需安装本作者插件，但必须启用并授权 SillyTavern 内置角色正则，否则 AI 不能还原。" +
+        "\n角色正则本身含原文，不属于加密。继续吗？"
+    );
+    if (!approved) return;
+    const response = await fetch('/api/characters/export', {
+        method:'POST',
+        headers:getRequestHeaders(),
+        body:JSON.stringify({avatar_url:character.avatar,format:'png'}),
+    });
+    if(!response.ok)throw new Error("读取角色 PNG 失败，HTTP "+response.status);
+    const original = new Uint8Array(await response.arrayBuffer());
+    const input = readPngCard(original);
+    const {card,report} = publishCard(input, {visibilityByUid: visibility,expectedWorld:book});
+    const audit = auditPublishedCard(card);
+    if(!audit.ok || audit.hiddenCount!==report.hiddenCount) {
+        throw new Error("发布校验失败："+audit.issues.join("；"));
+    }
+    const safe = String(character.name || "Character").replace(/[\\/:*?"<>|]/g,"_").slice(0,72);
+    if(format==="png") {
+        const image = writePngCard(original, card);
+        downloadFile(image, safe+"-防剧透版.png", "image/png");
+    } else {
+        downloadFile(JSON.stringify(card,null,2),safe+"-防剧透版.json","application/json;charset=utf-8");
+    }
+    notify("成功导出：隐藏 "+report.hiddenCount+" 条。原文件未修改。","success");
 }
 
 function bindEvents() {
@@ -351,6 +415,12 @@ function bindEvents() {
         event.preventDefault();
         const action = button.dataset.lspAction;
         if (action === "audit") audit();
+        else if (action === "export-png" || action === "export-json") {
+            publishSelectedCharacter(action === "export-png" ? "png" : "json").catch(error => {
+                console.error("[lore-spoilers-selective] publish failed", error);
+                notify(error.message || "发布失败，请查看控制台", "error");
+            });
+        }
         else if (action === HIDDEN || action === PUBLIC) {
             bulkVisibility(action).catch(error => {
                 console.error(`[${EXT}] bulk failed`, error);
@@ -402,7 +472,7 @@ jQuery(async () => {
         bindEvents();
         setModeClass();
         scheduleSync();
-        console.info(`[${EXT}] Loaded — selective world-info masking (NOT encryption)`);
+        console.info(`[${EXT}] Author publisher v2 ready (not encryption)`);
     } catch (error) {
         console.error(`[${EXT}] Could not initialize`, error);
     }
