@@ -111,3 +111,30 @@ test('10MB front-end MVU author-card preservation',()=>{
   assert.equal(loaded.data.character_book.entries[0].content,source.data.character_book.entries[0].content);
   assert.equal(loaded.data.extensions.regex_scripts.at(-1).replaceString,source.data.character_book.entries[1].content);
 });
+
+test('empty lore entries are skipped while valid hidden entries still publish',()=>{
+  const source=card();
+  source.data.character_book.entries.push(
+    {id:408006,comment:'MVU 控制项',content:'',keys:['trigger'],extensions:{lore_spoilers_visibility:'hidden'},enabled:true},
+    {id:408007,comment:'只有空格',content:' \n  ',keys:['scene'],extensions:{lore_spoilers_visibility:'hidden'},enabled:true}
+  );
+  const original=JSON.stringify(source);
+  const {card:output,report}=publishCard(source);
+  assert.equal(JSON.stringify(source),original);
+  assert.equal(report.skippedEmptyCount,2);
+  assert.deepEqual(report.skippedEmptyIds,['408006','408007']);
+  assert.equal(report.hiddenCount,1);
+  assert.equal(output.data.character_book.entries[2].content,'');
+  assert.equal(output.data.character_book.entries[2].comment,'MVU 控制项');
+  assert.deepEqual(output.data.character_book.entries[2].keys,['trigger']);
+  assert.equal(output.data.character_book.entries[2].extensions.lore_spoilers_visibility,'public');
+  assert.equal(output.data.character_book.entries[2].enabled,true);
+  assert.equal(output.data.character_book.entries[3].content,' \n  ');
+  assert.equal(auditPublishedCard(output).ok,true);
+});
+
+test('all selected hidden entries blank returns actionable message',()=>{
+  const source=card();
+  source.data.character_book.entries[1].content='';
+  assert.throws(()=>publishCard(source),/正文全部为空/);
+});
