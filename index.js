@@ -26,5 +26,5 @@
             document.addEventListener('DOMContentLoaded', render, {once: true});
         } else render();
     }
-    import('./app.js?v=2.0.6').catch(report);
+    import('./app.js?v=2.1.0').catch(report);
 })();
