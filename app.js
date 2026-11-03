@@ -152,7 +152,7 @@ function buildToolbar(book, data) {
     const header = document.createElement("div");
     header.className = "lsp-toolbar-head";
     const title = document.createElement("h4");
-    title.textContent = "🔐 逐条权限 — " + book + " · v2.1.1";
+    title.textContent = "🔐 逐条权限 — " + book + " · v2.2.0";
     const count = document.createElement("span");
     count.className = "lsp-secret-count";
     count.textContent = `${hiddenCount} 隐藏 / ${entries.length} 条`;
@@ -426,7 +426,7 @@ async function publishSelectedCharacter(format) {
         stage = "下载防剧透 JSON";
         downloadFile(JSON.stringify(card,null,2),safe+"-防剧透版.json","application/json;charset=utf-8");
     }
-    notify("成功导出：隐藏 "+report.hiddenCount+" 条"
+    notify("成功导出【"+report.world+"】：隐藏 "+report.hiddenCount+" 条"
       +(report.skippedEmptyCount?"，跳过 "+report.skippedEmptyCount+" 条空白正文":"")
       +"。原文件未修改。","success");
     } catch(error) {
@@ -442,7 +442,7 @@ function reportPublishError(error, operation = "发布角色卡") {
     const stack = String(error?.cause?.stack || error?.stack || "(无法获取调用栈)");
     const message = String(error?.message || error);
     const diagnostics = [
-        "Lore Spoilers v2.1.1 错误诊断",
+        "Lore Spoilers v2.2.0 错误诊断",
         "操作：" + operation,
         "阶段：" + (error?.lspStage || "未进入导出阶段 / 其他操作"),
         "信息：" + message,
