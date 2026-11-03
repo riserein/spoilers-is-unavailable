@@ -138,3 +138,20 @@ test('all selected hidden entries blank returns actionable message',()=>{
   source.data.character_book.entries[1].content='';
   assert.throws(()=>publishCard(source),/正文全部为空/);
 });
+
+test('publishing creates a new lorebook name and binding, separate from the author world',()=>{
+  const source=card();
+  const {card:release,report}=publishCard(source);
+  assert.equal(source.data.extensions.world,'TestBook');
+  assert.equal(source.data.character_book.name,'TestBook');
+  assert.notEqual(release.data.character_book.name,source.data.character_book.name);
+  assert.equal(release.data.extensions.world,release.data.character_book.name);
+  assert.match(release.data.extensions.world,/防剧透世界书/);
+  assert.equal(report.world,release.data.extensions.world);
+  assert.equal(report.sourceWorld,'TestBook');
+  assert.equal(auditPublishedCard(release).ok,true);
+  const image=writePngCard(fixture(source),release);
+  const read=readPngCard(image);
+  assert.equal(read.data.extensions.world,release.data.extensions.world);
+  assert.equal(read.data.character_book.name,release.data.extensions.world);
+});
