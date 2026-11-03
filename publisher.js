@@ -87,13 +87,24 @@ export function publishCard(sourceCard, { visibilityByUid=null, expectedWorld=''
     : '没有标记为隐藏的条目，未生成发布版');
   card.data.extensions ||= {};
   card.data.extensions.regex_scripts=scripts;
+  // SillyTavern prefers an existing local lorebook by the name referenced in
+  // data.extensions.world. Reusing the author's book name makes the imported
+  // "hidden" card open the author's ORIGINAL, unmasked lorebook.
+  // A distinct embedded book name AND binding forces the user to import the
+  // published copy, without overwriting the author's local original.
+  const originalWorldName=String(book.name || linkedWorld || '');
+  const cardLabel=String(card.data?.name || card.name || '角色');
+  const safeLabel=cardLabel.replace(/[\\/:*?"<>|\x00-\x1f]/g,' ').trim().slice(0,56) || '角色';
+  const publishedWorldName=safeLabel+' - 防剧透世界书 '+token.slice(0,8);
+  book.name=publishedWorldName;
+  card.data.extensions.world=publishedWorldName;
   if(card.character_book && card.character_book!==card.data.character_book) delete card.character_book;
   card.data.extensions.lore_spoilers_publish={
-    version:'2.1.1',count:hiddenIds.length,skippedEmptyCount:skippedEmptyIds.length,
+    version:'2.2.0',count:hiddenIds.length,skippedEmptyCount:skippedEmptyIds.length,
     note:'Text is present in scoped regex replacement strings: NOT encrypted.'
   };
   const report={
-    world:book.name||linkedWorld||'',total:book.entries.length,publicCount:visible,
+    world:publishedWorldName,sourceWorld:originalWorldName,total:book.entries.length,publicCount:visible,
     hiddenCount:hiddenIds.length,hiddenIds,markers,scriptCount:scripts.length,
     skippedEmptyCount:skippedEmptyIds.length,skippedEmptyIds
   };
@@ -109,6 +120,9 @@ export function publishCard(sourceCard, { visibilityByUid=null, expectedWorld=''
 export function auditPublishedCard(card) {
   const book=getEntries(card),scripts=card.data?.extensions?.regex_scripts||[];
   const issues=[];let count=0;
+  if(card.data?.extensions?.lore_spoilers_publish &&
+      (!book.name || card.data?.extensions?.world!==book.name))
+    issues.push('防剧透世界书名称与角色绑定名称不一致');
   book.entries.forEach(entry=>{
     if(entry.extensions?.[VISIBILITY_FIELD]!=='hidden')return;
     count++;
